@@ -21,7 +21,7 @@ async function fetchFigmaFile(fileKey) {
 }
 
 // Example: periodically fetch and broadcast Figma data
-const FIGMA_FILE_KEY = 'cfwX2UxcarHOJE0HhoNQCs'; // Replace with your file key
+const FIGMA_FILE_KEY = 'jWaq2LpehD8w3JFTorfXpz'; // Replace with your file key
 
 setInterval(async () => {
   const data = await fetchFigmaFile(FIGMA_FILE_KEY);
