@@ -5,6 +5,9 @@ import fetch from 'node-fetch';
 import express from 'express';
 import http from 'http';
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 // --- HTTP Server Setup with Express ---
 const app = express();
@@ -69,25 +72,33 @@ if (process.env.GEMINI_API_KEY) {
   console.error('ERROR: GEMINI_API_KEY is not set. HTML generation will fail.');
 }
 
+// Define __dirname for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Define the temporary directory for HTML outputs
+const TEMP_HTML_DIR = path.join(__dirname, 'temp_html_outputs');
+
+// Ensure the temporary directory exists
+fs.mkdir(TEMP_HTML_DIR, { recursive: true }).catch(console.error);
+
 app.post('/api/generate-html', async (req, res) => {
   console.log('POST /api/generate-html endpoint hit on backend!');
   const figmaPageData = req.body;
 
-  if (!figmaPageData) {
-    return res.status(400).send('Error: No Figma page data received.');
+  if (!figmaPageData || !figmaPageData.name || !figmaPageData.id) {
+    return res.status(400).send('Error: Figma page data (including name and id) is required.');
   }
 
   if (!genAI) {
     return res.status(500).send('Error: Gemini AI client not initialized. Check GEMINI_API_KEY.');
   }
 
-  console.log('Received Figma data, preparing to call Gemini API.');
+  console.log(`Received Figma page "${figmaPageData.name}", preparing to call Gemini API.`);
 
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
-
     const figmaJsonString = JSON.stringify(figmaPageData, null, 2);
-
     const prompt = `
       You are an expert web developer specializing in converting design specifications into clean, functional HTML and CSS.
       Your task is to convert the provided Figma page JSON data into a single, well-structured HTML file.
@@ -125,20 +136,38 @@ app.post('/api/generate-html', async (req, res) => {
 
     console.log('Sending prompt to Gemini API...');
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const generatedHtml = response.text();
+    const geminiResponse = await result.response;
+    const generatedHtml = geminiResponse.text();
 
     console.log('Received HTML from Gemini API.');
-    res.setHeader('Content-Type', 'text/html');
-    res.send(generatedHtml);
+
+    // Sanitize the figmaPageData.name to make it a valid filename
+    // This replaces spaces and common invalid characters with underscores
+    const safePageName = figmaPageData.name.replace(/[^a-z0-9_\-\.]/gi, '_');
+    const filename = `${safePageName}.html`;
+    const filePath = path.join(TEMP_HTML_DIR, filename);
+
+    await fs.writeFile(filePath, generatedHtml, 'utf8');
+    console.log(`Successfully saved HTML to ${filePath}`);
+
+    // Respond to the client
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).json({
+      message: `HTML for page '${figmaPageData.name}' generated and saved successfully on server.`,      
+      filename: filename, 
+      htmlContent: generatedHtml
+    });
 
   } catch (error) {
-    console.error('Error calling Gemini API:', error);
-    let errorMessage = 'Error generating HTML via Gemini. Check server logs.';
+    console.error('Error in /api/generate-html route:', error);
+    let errorMessage = 'Error generating or saving HTML. Check server logs.';
     if (error.message) {
       errorMessage += `Details: ${error.message}`;
     }
-    res.status(500).send(`<html><body><h1>Error Generating HTML</h1><p>${errorMessage}</p><pre>${error.stack ? error.stack : ''}</pre></body></html>`);
+    res.status(500).json({ 
+      error: "Failed to generate or save HTML", 
+      details: errorMessage 
+    });
   }
 });
 

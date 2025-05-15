@@ -53,6 +53,7 @@ function App() {
   const [error, setError] = useState(null);
   const [selectedPageId, setSelectedPageId] = useState(null);
   const [generatedHtml, setGeneratedHtml] = useState('');
+  const [serverMessage, setServerMessage] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
@@ -124,9 +125,10 @@ function App() {
     }
     setIsGenerating(true);
     setGeneratedHtml('');
-    setError(null); // Clear previous errors
+    setServerMessage('');
+    setError(null);
 
-    console.log("Sending this Figma page data to backend for Gemini:", selectedPage);
+    console.log("Sending Figma page data to backend:", selectedPage);
 
     try {
       const response = await fetch('/api/generate-html', {
@@ -137,29 +139,38 @@ function App() {
         body: JSON.stringify(selectedPage),
       });
 
+      const resultJson = await response.json(); // Expecting JSON response
+
       if (!response.ok) {
-        // Try to get error message from backend if available
-        const errorData = await response.text();
-        throw new Error(`Network response was not ok: ${response.status} ${response.statusText}. Server says: ${errorData}`);
+        throw new Error(resultJson.details || `Server responded with ${response.status}`);
+      }
+      
+      setServerMessage(resultJson.message); // Display server's success message
+      if (resultJson.htmlContent) {
+        setGeneratedHtml(resultJson.htmlContent); // Set HTML content for preview and download
+      } else {
+        // Should not happen if backend sends htmlContent on success
+        setGeneratedHtml('<p>HTML content was not provided by the server.</p>'); 
       }
 
-      const htmlResult = await response.text(); // Assuming backend returns HTML as plain text
-      setGeneratedHtml(htmlResult);
     } catch (error) {
       console.error('Error generating HTML:', error);
       setError(`Failed to generate HTML: ${error.message}`);
-      setGeneratedHtml('<p style="color: red;">Error fetching HTML from backend.</p>'); // Display error in HTML output area
+      setGeneratedHtml('<p style="color: red;">Error fetching or processing HTML from backend.</p>');
+      setServerMessage('');
     }
 
     setIsGenerating(false);
   };
 
   const handleDownloadHtml = () => {
-    if (!generatedHtml || generatedHtml.startsWith('<p style="color: red;')) {
+    if (!generatedHtml || generatedHtml.startsWith('<p style="color: red;') || generatedHtml.startsWith('<p>HTML content was not provided')) {
       alert("No valid HTML content to download or an error occurred.");
       return;
     }
-    const filename = `${selectedPage?.name || 'generated-page'}.html`;
+    // Use the selected page name for the download, sanitize it
+    const safePageName = selectedPage?.name?.replace(/[^a-z0-9_\-\.]/gi, '_') || 'generated-page';
+    const filename = `${safePageName}.html`;
     const blob = new Blob([generatedHtml], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -221,11 +232,13 @@ function App() {
             
             {isGenerating && <p className="loading-gemini">Contacting Gemini via backend... please wait.</p>}
             
+            {serverMessage && <p className="server-message">{serverMessage}</p>}
+            
             {generatedHtml && (
               <div className="generated-html-output">
-                <h3>Gemini Output (from backend):</h3>
+                <h3>Gemini Output (Preview):</h3>
                 <div dangerouslySetInnerHTML={{ __html: generatedHtml }} />
-                {generatedHtml && !generatedHtml.startsWith('<p style="color: red;') && (
+                {generatedHtml && !generatedHtml.startsWith('<p style="color: red;') && !generatedHtml.startsWith('<p>HTML content was not provided') && (
                   <button onClick={handleDownloadHtml} style={{ marginTop: '10px' }}>
                     Download HTML
                   </button>
